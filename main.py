@@ -1,8 +1,8 @@
 # =============================
-# main.py (final - works with Python 3.13 + Render free)
+# main.py (Final – Render Free Safe Version)
 # =============================
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from flask import Flask
 import asyncio, threading, time, nest_asyncio
 
@@ -13,7 +13,7 @@ from blockchain import check_ton_payment
 # اجازه اجرای چندبخشی asyncio در محیط‌های درحال‌اجرا (مثل Flask)
 nest_asyncio.apply()
 
-# ----------------------------- 
+# -----------------------------
 # Keepalive Flask برای Render free plan
 # -----------------------------
 def keep_alive():
@@ -22,9 +22,9 @@ def keep_alive():
     @app.route('/')
     def home():
         return "✅ Ton Sales Bot running on Render free plan!"
-    app.run(host="0.0.0.0", port=10000)
 
-threading.Thread(target=keep_alive, daemon=True).start()
+    # اجرای Flask در Thread اصلی (Render انتظار همین رفتار را دارد)
+    app.run(host="0.0.0.0", port=10000)
 
 # -----------------------------
 # محصولات تستی
@@ -35,7 +35,7 @@ PRODUCTS = [
 ]
 
 # -----------------------------
-# هندلرها
+# هندلرهای تلگرام
 # -----------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = [[InlineKeyboardButton(p["name"], callback_data=f"buy_{p['id']}")] for p in PRODUCTS]
@@ -45,6 +45,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
     pid = int(query.data.replace("buy_", ""))
     p = next(item for item in PRODUCTS if item["id"] == pid)
     comment = f"ORDER{pid}_{int(time.time())}"
@@ -55,25 +56,30 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"برای پرداخت روی لینک زیر بزن:\n{link}\n\nبعد از پرداخت تا تأیید صبر کن..."
     )
 
+    # بررسی متناوب پرداخت
     for _ in range(10):
         await asyncio.sleep(CHECK_INTERVAL)
         if check_ton_payment(p["price"], comment):
             await query.message.reply_text(f"✅ پرداخت تأیید شد!\n📁 لینک دانلود:\n{p['file']}")
             if ADMIN_ID:
-                await context.bot.send_message(ADMIN_ID, f"💸 خرید جدید: {p['name']} ({p['price']} TON)")
+                await context.bot.send_message(
+                    ADMIN_ID, f"💸 خرید جدید: {p['name']} ({p['price']} TON)"
+                )
             return
     await query.message.reply_text("❌ پرداخت پیدا نشد، بعداً دوباره امتحان کن.")
 
 # -----------------------------
-# اجرای اصلی
+# اجرای همزمان Flask و Bot
 # -----------------------------
-def main():
+def start_bot():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(buy_handler, pattern="^buy_"))
 
-    print("🚀 Bot running on Render free plan (Python 3.13 ready)...")
-    app.run_polling(stop_signals=None)  # جلوگیری از خطای سیگنال در سرور
+    print("🚀 Bot polling started on Render free plan...")
+    app.run_polling(stop_signals=None)
 
 if __name__ == "__main__":
-    main()
+    # اجرای ربات در Thread جدا و Flask در Thread اصلی
+    threading.Thread(target=start_bot, daemon=True).start()
+    keep_alive()
